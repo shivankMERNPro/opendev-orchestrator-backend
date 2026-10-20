@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Doctor stays read-only
+        env:
+          NODE_ENV: development
+          HOST: 127.0.0.1
+          PORT: 3001
+          MONGO_URI: mongodb://127.0.0.1:27017/opendev-orchestrator
+        run: npm run doctor
+
+  server:
+    name: compiled server health
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Compiled server answers health
+        env:
+          NODE_ENV: development
+          HOST: 127.0.0.1
+          PORT: 3001
+          MONGO_URI: mongodb://127.0.0.1:27017/opendev-orchestrator
+        run: |
+          node dist/server.js > /tmp/opendev-server.log 2>&1 &
+          echo $! > /tmp/opendev-server.pid
+          ok=0
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://127.0.0.1:3001/api/v1/health > /tmp/opendev-health.json; then
+              ok=1
+              break
+            fi
+            sleep 0.5
+          done
+          kill "$(cat /tmp/opendev-server.pid)" || true
+          wait "$(cat /tmp/opendev-server.pid)" || true
+          if [ "$ok" -ne 1 ]; then
+            cat /tmp/opendev-server.log
+            exit 1
+          fi
+          grep -q '"status":"ok"' /tmp/opendev-health.json
+          grep -q '"database":"connected"' /tmp/opendev-health.json
+          if grep -q 'mongodb://' /tmp/opendev-health.json; then
+            echo 'health response exposed the connection string'
+            exit 1
+          fi
