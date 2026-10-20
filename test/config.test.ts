@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DEFAULT_MONGO_URI } from '../src/configs/mongoUri.js';
+import { DEFAULT_OLLAMA_BASE_URL } from '../src/configs/ollamaEndpoint.js';
 import { DEFAULT_PORT, loadConfig } from '../src/constants/env.js';
 import { StartupError } from '../src/utils/startupError.js';
 
@@ -14,6 +15,8 @@ describe('configuration', () => {
     assert.equal(config.port, DEFAULT_PORT);
     assert.equal(config.port, 3001);
     assert.equal(config.nodeEnv, 'development');
+    assert.equal(config.ollamaBaseUrl, DEFAULT_OLLAMA_BASE_URL);
+    assert.equal(config.ollamaMaxConcurrentPulls, 1);
   });
 
   it('accepts the configured local connection string', () => {
@@ -111,5 +114,35 @@ describe('configuration', () => {
         return true;
       },
     );
+  });
+
+  it('rejects a non-loopback Ollama URL without echoing it', () => {
+    for (const ollamaBaseUrl of [
+      'http://db.example:11434',
+      'http://192.168.1.20:11434',
+      'http://10.0.0.8:11434',
+      'http://user:sentinel-9f3a2c@127.0.0.1:11434',
+      'http://127.0.0.1:11434/api',
+    ]) {
+      assert.throws(
+        () =>
+          loadConfig({
+            NODE_ENV: 'development',
+            OLLAMA_BASE_URL: ollamaBaseUrl,
+          }),
+        (error: unknown) => {
+          assert.ok(error instanceof StartupError);
+          assert.equal(error.message.includes('sentinel-9f3a2c'), false);
+          assert.equal(error.message.includes('db.example'), false);
+          assert.equal(error.message.includes('192.168.1.20'), false);
+          assert.equal(error.message.includes('/api'), false);
+          assert.ok(
+            error.message === 'OLLAMA_BASE_URL is invalid' ||
+              error.message === 'OLLAMA_BASE_URL must use a loopback address',
+          );
+          return true;
+        },
+      );
+    }
   });
 });

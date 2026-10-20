@@ -13,6 +13,13 @@ import { errorMiddleware } from './middlewares/error.middleware.js';
 import { hostGuardMiddleware } from './middlewares/hostGuard.middleware.js';
 import { notFoundMiddleware } from './middlewares/notFound.middleware.js';
 import { requestLoggerMiddleware } from './middlewares/requestLogger.middleware.js';
+import { createHttpOllamaClient } from './services/ollama/client.js';
+import type { OllamaClient } from './services/ollama/client.js';
+import { createOllamaLibraryClient } from './services/ollama/libraryClient.js';
+import { createModelAssist } from './services/ollama/modelAssist.js';
+import type { ModelAssist } from './services/ollama/modelAssist.js';
+import { createPullCoordinator } from './services/ollama/pullCoordinator.js';
+import type { PullCoordinator } from './services/ollama/pullCoordinator.js';
 import { isDirectExecution } from './utils/isDirectExecution.js';
 import { logger } from './utils/logger.js';
 import { assertLoopbackBind } from './utils/loopback.js';
@@ -26,6 +33,8 @@ export interface RunningServer {
 
 export interface ServerDependencies {
   connectDatabase?: (mongoUri: string) => Promise<DatabaseConnection>;
+  ollamaClient?: OllamaClient;
+  modelAssist?: ModelAssist;
 }
 
 function closeHttpServer(server: Server): Promise<void> {
@@ -43,6 +52,12 @@ function closeHttpServer(server: Server): Promise<void> {
 export function createApp(
   database: DatabaseConnection,
   config: Pick<AppConfig, 'corsOrigins'>,
+  models: {
+    client: OllamaClient;
+    pulls: PullCoordinator;
+    requestTimeoutMs: number;
+    assist: ModelAssist;
+  },
 ): express.Express {
   const app = express();
   app.disable('x-powered-by');
@@ -56,7 +71,7 @@ export function createApp(
   app.use(express.json({ limit: '100kb', strict: true }));
   app.use(requestLoggerMiddleware);
   app.use(hostGuardMiddleware);
-  app.use('/api/v1', createApiRouter(database));
+  app.use('/api/v1', createApiRouter(database, models));
   app.use(notFoundMiddleware);
   app.use(errorMiddleware);
   return app;
@@ -80,7 +95,23 @@ export async function startServer(
     throw new StartupError('Database connection failed');
   }
 
-  const app = createApp(database, config);
+  const ollamaClient =
+    dependencies.ollamaClient ??
+    createHttpOllamaClient(config.ollamaBaseUrl, config.ollamaRequestTimeoutMs);
+  const pulls = createPullCoordinator({
+    client: ollamaClient,
+    maxConcurrent: config.ollamaMaxConcurrentPulls,
+    pullTimeoutMs: config.ollamaPullTimeoutMs,
+  });
+  const assist =
+    dependencies.modelAssist ??
+    createModelAssist({ library: createOllamaLibraryClient() });
+  const app = createApp(database, config, {
+    client: ollamaClient,
+    pulls,
+    requestTimeoutMs: config.ollamaRequestTimeoutMs,
+    assist,
+  });
   const server = createServer(app);
 
   try {
@@ -106,6 +137,7 @@ export async function startServer(
     host: config.host,
     port: address.port,
     async close(): Promise<void> {
+      pulls.shutdown();
       await closeHttpServer(server);
       await database.close();
     },

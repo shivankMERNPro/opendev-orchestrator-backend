@@ -12,7 +12,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
-    "test": "node --import tsx --test test/config.test.ts test/database.test.ts test/startup.test.ts test/health.test.ts test/doctor.test.ts",
+    "test": "node --import tsx --test test/config.test.ts test/database.test.ts test/startup.test.ts test/health.test.ts test/doctor.test.ts test/models.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "format:check": "prettier --check .",
     "format:fix": "prettier --write .",

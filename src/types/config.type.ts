@@ -8,4 +8,8 @@ export interface AppConfig {
   port: number;
   mongoUri: string;
   corsOrigins: readonly string[];
+  ollamaBaseUrl: string;
+  ollamaMaxConcurrentPulls: number;
+  ollamaRequestTimeoutMs: number;
+  ollamaPullTimeoutMs: number;
 }
